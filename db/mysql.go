@@ -50,12 +50,14 @@ func (m *MySQL) Connect() *MySQL {
 }
 
 func (m *MySQL) InsertCountries(countries []utils.CountriesResponse) error {
-	for _, country := range countries {
+	for i, country := range countries {
 		_, err := m.db.Exec(`
 			INSERT INTO countries (name, capital, region, population, currency_code, exchange_rate, estimated_gdp, flag_url, last_refreshed_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, country.Name, country.Capital, country.Region, country.Population, country.CurrencyCode, country.ExchangeRate, country.EstimatedGDP, country.FlagURL, country.LastRefreshedAt)
 		if err != nil {
+			log.Printf("Error inserting country %d (%s): %v", i, country.Name, err)
+			log.Printf("Country: %+v", err.Error())
 			return err
 		}
 	}
