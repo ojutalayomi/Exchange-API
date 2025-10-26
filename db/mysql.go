@@ -30,7 +30,7 @@ func (m *MySQL) Connect() *MySQL {
 
 	_, err = m.db.Exec(`
 		CREATE TABLE IF NOT EXISTS countries (
-			id INT AUTO_INCREMENT PRIMARY KEY,
+			id INT AUTO_INCREMENT PRIMARY KEY UNIQUE,
 			name VARCHAR(255) NOT NULL,
 			capital VARCHAR(255),
 			region VARCHAR(255),
@@ -72,14 +72,36 @@ func (m *MySQL) UpdateCountry(country utils.CountriesResponse) error {
 	return nil
 }
 
-func (m *MySQL) GetCountries() ([]utils.CountriesResponse, error) {
-	rows, err := m.db.Query(`
+func (m *MySQL) GetCountries(region, currency, sort *string) ([]utils.CountriesResponse, error) {
+	var (
+		args  []interface{}
+		conds []string
+	)
+	query := `
 		SELECT id, name, capital, region, population, currency_code, exchange_rate, estimated_gdp, flag_url, last_refreshed_at FROM countries
-	`)
+	`
+	if region != nil && *region != "" {
+		conds = append(conds, "region = ?")
+		args = append(args, *region)
+	}
+	if currency != nil && *currency != "" {
+		conds = append(conds, "currency_code = ?")
+		args = append(args, *currency)
+	}
+	if len(conds) > 0 {
+		query += " WHERE " + conds[0]
+		for i := 1; i < len(conds); i++ {
+			query += " AND " + conds[i]
+		}
+	}
+
+	if sort != nil && *sort == "gdp_desc" {
+		query += " ORDER BY estimated_gdp DESC"
+	}
+	rows, err := m.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var countries []utils.CountriesResponse
 	for rows.Next() {
@@ -140,13 +162,20 @@ func (m *MySQL) GetCountry(name string) (utils.CountriesResponse, error) {
 }
 
 func (m *MySQL) DeleteCountry(name string) error {
-	_, err := m.db.Exec(`
+	res, err := m.db.Exec(`
 		DELETE FROM countries WHERE name = ?
 	`, name)
 	if err != nil {
 		return err
 	}
-	return nil
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return err
 }
 
 func (m *MySQL) GetStats() (int, error) {

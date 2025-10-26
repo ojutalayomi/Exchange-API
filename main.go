@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"os"
 	"step2/db"
 	"step2/utils"
@@ -15,7 +16,6 @@ import (
 )
 
 var (
-	port = "8080"
 	addr = "0.0.0.0"
 )
 
@@ -27,14 +27,14 @@ func SetupRoutes(database *db.MySQL) *gin.Engine {
 	router.POST("/countries/refresh", func(c *gin.Context) {
 		countries, err := utils.FetchAPI(countriesAPIURL)
 		if err != nil {
-			c.JSON(503, gin.H{"error": "External data source unavailable", "details": "Could not fetch data from countries API"})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "External data source unavailable", "details": "Could not fetch data from countries API"})
 			return
 		}
 
 		var Countries []utils.Country
 		err = json.Unmarshal([]byte(countries), &Countries)
 		if err != nil {
-			c.JSON(503, gin.H{"error": "External data source unavailable", "details": "Could not fetch data from countries API"})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "External data source unavailable", "details": "Could not fetch data from countries API"})
 			return
 		}
 
@@ -50,9 +50,9 @@ func SetupRoutes(database *db.MySQL) *gin.Engine {
 		}
 
 		// Get ALL existing countries in ONE query
-		existingCountries, err := database.GetCountries()
+		existingCountries, err := database.GetCountries(nil, nil, nil)
 		if err != nil {
-			c.JSON(503, gin.H{"error": "Could not fetch existing countries from database"})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Could not fetch existing countries from database"})
 			return
 		}
 
@@ -105,7 +105,7 @@ func SetupRoutes(database *db.MySQL) *gin.Engine {
 		if len(countriesToInsert) > 0 {
 			err = database.InsertCountries(countriesToInsert)
 			if err != nil {
-				c.JSON(503, gin.H{"error": "Could not insert data into database"})
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Could not insert data into database"})
 				return
 			}
 		}
@@ -114,14 +114,14 @@ func SetupRoutes(database *db.MySQL) *gin.Engine {
 		if len(countriesToUpdate) > 0 {
 			err = database.UpdateCountries(countriesToUpdate)
 			if err != nil {
-				c.JSON(503, gin.H{"error": "Could not update data in database"})
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Could not update data in database"})
 				return
 			}
 		}
 
 		// Generate image asynchronously (optional optimization)
 		go func() {
-			allCountries, err := database.GetCountries()
+			allCountries, err := database.GetCountries(nil, nil, nil)
 			if err != nil {
 				fmt.Printf("Warning: Could not fetch countries for image generation: %v\n", err)
 				return
@@ -134,9 +134,16 @@ func SetupRoutes(database *db.MySQL) *gin.Engine {
 		c.JSON(204, nil)
 	})
 	router.GET("/countries", func(c *gin.Context) {
-		countries, err := database.GetCountries()
+		region := c.Query("region")
+		currency := c.Query("currency")
+		sort := c.Query("sort")
+		countries, err := database.GetCountries(&region, &currency, &sort)
 		if err != nil {
 			c.JSON(404, gin.H{"error": "Country not found"})
+			return
+		}
+		if countries == nil {
+			c.JSON(404, gin.H{"error": "No countries found"})
 			return
 		}
 		c.JSON(200, countries)
@@ -169,10 +176,10 @@ func SetupRoutes(database *db.MySQL) *gin.Engine {
 		c.JSON(200, gin.H{"message": "Country deleted successfully"})
 	})
 
-	router.GET("/stats", func(c *gin.Context) {
+	router.GET("/status", func(c *gin.Context) {
 		stats, err := database.GetStats()
 		if err != nil {
-			c.JSON(503, gin.H{"error": "Could not get stats from database"})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Could not get stats from database"})
 			return
 		}
 		c.JSON(200, gin.H{
@@ -181,7 +188,7 @@ func SetupRoutes(database *db.MySQL) *gin.Engine {
 		})
 	})
 
-	router.GET("/countries/images", func(c *gin.Context) {
+	router.GET("/countries/image", func(c *gin.Context) {
 		imagePath := "cache/summary.png"
 
 		if _, err := os.Stat(imagePath); os.IsNotExist(err) {
@@ -209,13 +216,14 @@ func main() {
 	database.Connect()
 
 	router := SetupRoutes(&database)
+	port := fmt.Sprintf(":%s", os.Getenv("PORT"))
 
 	fmt.Printf("\n🚀 Step 2 API server starting on port %s\n", port)
 	fmt.Println("📝 API Documentation available at: /")
 	fmt.Println("🏥 Health check available at: /health")
 	fmt.Printf("🔗 Me endpoint: GET /me\n\n")
 
-	if err := router.Run(fmt.Sprintf("%s:%s", addr, port)); err != nil {
+	if err := router.Run(port); err != nil {
 		fmt.Printf("Failed to start server: %v\n", err)
 	}
 }
